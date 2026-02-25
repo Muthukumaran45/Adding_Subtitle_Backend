@@ -1,3 +1,8 @@
 openai-whisper
 moviepy 
 ffmpeg-python
+fastapi 
+uvicorn
+python-multipart
+cloudinary 
+python-dotenv
