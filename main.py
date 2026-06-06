@@ -6,7 +6,6 @@ import cloudinary
 import cloudinary.uploader
 from fastapi import FastAPI, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
-from moviepy import VideoFileClip
 from dotenv import load_dotenv
 
 # Load environment variables
@@ -14,7 +13,7 @@ load_dotenv()
 
 app = FastAPI()
 
-# CORS
+# Enable CORS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -50,25 +49,41 @@ async def generate_subtitles(file: UploadFile = File(...)):
 
     unique_id = str(uuid.uuid4())
 
-    input_video_path = f"temp_{unique_id}.mp4"
-    audio_path = f"temp_{unique_id}.wav"
-    srt_path = f"temp_{unique_id}.srt"
+    raw_video_path = f"raw_{unique_id}.webm"
+    input_video_path = f"input_{unique_id}.mp4"
+    audio_path = f"audio_{unique_id}.wav"
+    srt_path = f"subtitle_{unique_id}.srt"
     output_video_path = f"output_{unique_id}.mp4"
 
     try:
-        # Save uploaded video
-        with open(input_video_path, "wb") as buffer:
+        # Save uploaded file
+        with open(raw_video_path, "wb") as buffer:
             buffer.write(await file.read())
 
-        # Extract audio
-        video = VideoFileClip(input_video_path)
-        video.audio.write_audiofile(audio_path)
-        video.close()
+        # Convert WebM -> MP4
+        subprocess.run([
+            "ffmpeg",
+            "-i", raw_video_path,
+            "-c:v", "libx264",
+            "-c:a", "aac",
+            input_video_path
+        ], check=True)
 
-        # Transcribe
+        # Extract audio (best for Whisper)
+        subprocess.run([
+            "ffmpeg",
+            "-i", input_video_path,
+            "-vn",
+            "-acodec", "pcm_s16le",
+            "-ar", "16000",
+            "-ac", "1",
+            audio_path
+        ], check=True)
+
+        # Transcribe using Whisper
         result = model.transcribe(audio_path)
 
-        # Create SRT
+        # Create SRT subtitle file
         with open(srt_path, "w", encoding="utf-8") as f:
             for i, segment in enumerate(result["segments"]):
                 start = segment["start"]
@@ -79,7 +94,7 @@ async def generate_subtitles(file: UploadFile = File(...)):
                 f.write(f"{format_time(start)} --> {format_time(end)}\n")
                 f.write(f"{text.strip()}\n\n")
 
-        # Burn subtitles
+        # Burn subtitles into video
         subprocess.run([
             "ffmpeg",
             "-i", input_video_path,
@@ -88,7 +103,7 @@ async def generate_subtitles(file: UploadFile = File(...)):
             output_video_path
         ], check=True)
 
-        # Upload to Cloudinary
+        # Upload video to Cloudinary
         upload_result = cloudinary.uploader.upload(
             output_video_path,
             resource_type="video",
@@ -103,7 +118,13 @@ async def generate_subtitles(file: UploadFile = File(...)):
         }
 
     finally:
-        # Cleanup temp files
-        for path in [input_video_path, audio_path, srt_path, output_video_path]:
+        # Clean up temporary files
+        for path in [
+            raw_video_path,
+            input_video_path,
+            audio_path,
+            srt_path,
+            output_video_path
+        ]:
             if os.path.exists(path):
                 os.remove(path)
