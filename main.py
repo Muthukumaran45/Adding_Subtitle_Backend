@@ -33,7 +33,13 @@ cloudinary.config(
 )
 
 # Load Whisper model once
-model = whisper.load_model("base")
+model = None
+
+def get_model():
+    global model
+    if model is None:
+        model = whisper.load_model("tiny")
+    return model
 
 
 def format_time(seconds):
@@ -81,7 +87,7 @@ async def generate_subtitles(file: UploadFile = File(...)):
         ], check=True)
 
         # Transcribe using Whisper
-        result = model.transcribe(audio_path)
+        result = get_model().transcribe(audio_path, language="en")
 
         # Create SRT subtitle file
         with open(srt_path, "w", encoding="utf-8") as f:
